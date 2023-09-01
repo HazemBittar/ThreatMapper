@@ -5,14 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gomodule/redigo/redis"
-	"github.com/olivere/elastic/v7"
-	"github.com/sirupsen/logrus"
-	redisCache "github.com/weaveworks/scope/cache"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gomodule/redigo/redis"
+	"github.com/olivere/elastic/v7"
+	"github.com/sirupsen/logrus"
+	redisCache "github.com/weaveworks/scope/cache"
 )
 
 const (
@@ -22,11 +23,12 @@ const (
 )
 
 var (
-	cveScanLogsEsIndex    = "cve-scan"
-	complianceLogsEsIndex = "compliance-scan-logs"
-	secretScanLogsEsIndex = "secret-scan-logs"
-	statusMap             map[string]string
-	nStatus               *Status
+	cveScanLogsEsIndex     = "cve-scan"
+	complianceLogsEsIndex  = "compliance-scan-logs"
+	secretScanLogsEsIndex  = "secret-scan-logs"
+	malwareScanLogsEsIndex = "malware-scan-logs"
+	statusMap              map[string]string
+	nStatus                *Status
 )
 
 type Status struct {
@@ -46,13 +48,15 @@ type NodeStatus struct {
 	VulnerabilityScanStatusTime map[string]string
 	ComplianceScanStatus        map[string]string
 	ComplianceScanStatusTime    map[string]string
+	MalwareScanStatus           map[string]string
+	MalwareScanStatusTime       map[string]string
 	SecretScanStatus            map[string]string
 	SecretScanStatusTime        map[string]string
 	NodeSeverity                map[string]string
 	sync.RWMutex
 }
 
-func (st *Status) getNodeStatus() (map[string]string, map[string]string, map[string]string, map[string]string, map[string]string, map[string]string, map[string]string) {
+func (st *Status) getNodeStatus() (map[string]string, map[string]string, map[string]string, map[string]string, map[string]string, map[string]string, map[string]string, map[string]string, map[string]string) {
 	st.nodeStatus.RLock()
 	nodeIdVulnerabilityStatusMap := st.nodeStatus.VulnerabilityScanStatus
 	nodeIdVulnerabilityStatusTimeMap := st.nodeStatus.VulnerabilityScanStatusTime
@@ -61,17 +65,19 @@ func (st *Status) getNodeStatus() (map[string]string, map[string]string, map[str
 	nodeSeverityMap := st.nodeStatus.NodeSeverity
 	nodeIdSecretStatusMap := st.nodeStatus.SecretScanStatus
 	nodeIdSecretStatusTimeMap := st.nodeStatus.SecretScanStatusTime
+	nodeIdMalwareStatusMap := st.nodeStatus.MalwareScanStatus
+	nodeIdMalwareStatusTimeMap := st.nodeStatus.MalwareScanStatusTime
 	st.nodeStatus.RUnlock()
-	return nodeIdVulnerabilityStatusMap, nodeIdVulnerabilityStatusTimeMap, nodeIdComplianceStatusMap, nodeIdComplianceStatusTimeMap, nodeSeverityMap, nodeIdSecretStatusMap, nodeIdSecretStatusTimeMap
+	return nodeIdVulnerabilityStatusMap, nodeIdVulnerabilityStatusTimeMap, nodeIdComplianceStatusMap, nodeIdComplianceStatusTimeMap, nodeSeverityMap, nodeIdSecretStatusMap, nodeIdSecretStatusTimeMap, nodeIdMalwareStatusMap, nodeIdMalwareStatusTimeMap
 }
 
 func (st *Status) getNodeSeverity() (map[string]string, error) {
 	nodeSeverity := make(map[string]string)
 	redisConn := st.redisPool.Get()
-	defer redisConn.Close()
 
 	var nodeSeverityData map[string]NodeSeverityData
 	nodeSeverityBytes, err := redisConn.Do("GET", nodeSeverityRedisKey)
+	redisConn.Close()
 	if err != nil || nodeSeverityBytes == nil {
 		return nodeSeverity, err
 	}
@@ -93,13 +99,13 @@ func (st *Status) getNodeSeverity() (map[string]string, error) {
 func (st *Status) updateScanStatusData() error {
 	var err error
 	// Node severity
-	nodeSeverity, err := st.getNodeSeverity()
-	if err != nil {
-		logrus.Error(err.Error())
-	}
-	st.nodeStatus.Lock()
-	st.nodeStatus.NodeSeverity = nodeSeverity
-	st.nodeStatus.Unlock()
+	//nodeSeverity, err := st.getNodeSeverity()
+	//if err != nil {
+	//	logrus.Error(err.Error())
+	//}
+	//st.nodeStatus.Lock()
+	//st.nodeStatus.NodeSeverity = nodeSeverity
+	//st.nodeStatus.Unlock()
 
 	var ok bool
 	mSearch := elastic.NewMultiSearchService(st.esClient)
@@ -129,6 +135,14 @@ func (st *Status) updateScanStatusData() error {
 	statusAggs.SubAggregation("secret_scan_timestamp", recentTimestampAggs)
 	nodeIdAggs.SubAggregation("secret_scan_status", statusAggs)
 	esQuery = elastic.NewSearchRequest().Index(secretScanLogsEsIndex).Query(elastic.NewMatchAllQuery()).Size(0).Aggregation("node_id", nodeIdAggs)
+	mSearch.Add(esQuery)
+
+	nodeIdAggs = elastic.NewTermsAggregation().Field("node_id.keyword").Size(esAggsSize)
+	statusAggs = elastic.NewTermsAggregation().Field("scan_status.keyword").Size(50)
+	recentTimestampAggs = elastic.NewMaxAggregation().Field("@timestamp")
+	statusAggs.SubAggregation("malware_scan_timestamp", recentTimestampAggs)
+	nodeIdAggs.SubAggregation("malware_scan_status", statusAggs)
+	esQuery = elastic.NewSearchRequest().Index(malwareScanLogsEsIndex).Query(elastic.NewMatchAllQuery()).Size(0).Aggregation("node_id", nodeIdAggs)
 	mSearch.Add(esQuery)
 
 	mSearchResult, err := mSearch.Do(context.Background())
@@ -219,6 +233,49 @@ func (st *Status) updateScanStatusData() error {
 	st.nodeStatus.Lock()
 	st.nodeStatus.SecretScanStatus = nodeIdSecretStatusMap
 	st.nodeStatus.SecretScanStatusTime = nodeIdSecretStatusTimeMap
+	st.nodeStatus.Unlock()
+
+	nodeIdMalwareStatusMap := make(map[string]string)
+	nodeIdMalwareStatusTimeMap := make(map[string]string)
+	malwareResp := mSearchResult.Responses[3]
+	nodeIdAggsBkt, ok = malwareResp.Aggregations.Terms("node_id")
+	if !ok {
+		return nil
+	}
+	for _, nodeIdAggs := range nodeIdAggsBkt.Buckets {
+		if nodeIdAggs.Key.(string) == "" {
+			continue
+		}
+		latestScanTime := 0.0
+		var latestStatus, latestScanTimeStr string
+		scanStatusBkt, ok := nodeIdAggs.Aggregations.Terms("malware_scan_status")
+		if !ok {
+			continue
+		}
+		for _, scanStatusAggs := range scanStatusBkt.Buckets {
+			recentTimestampBkt, ok := scanStatusAggs.Aggregations.Max("malware_scan_timestamp")
+			if !ok || recentTimestampBkt == nil || recentTimestampBkt.Value == nil {
+				continue
+			}
+			if *recentTimestampBkt.Value > latestScanTime {
+				latestScanTime = *recentTimestampBkt.Value
+				latestStatus = scanStatusAggs.Key.(string)
+				valueAsStr, ok := recentTimestampBkt.Aggregations["value_as_string"]
+				if ok {
+					latestScanTimeStr = strings.ReplaceAll(string(valueAsStr), "\"", "")
+				}
+			}
+		}
+		latestStatus, ok = statusMap[latestStatus]
+		if !ok {
+			latestStatus = scanStatusNeverScanned
+		}
+		nodeIdMalwareStatusMap[strings.Split(nodeIdAggs.Key.(string), ";")[0]] = latestStatus
+		nodeIdMalwareStatusTimeMap[strings.Split(nodeIdAggs.Key.(string), ";")[0]] = latestScanTimeStr
+	}
+	st.nodeStatus.Lock()
+	st.nodeStatus.MalwareScanStatus = nodeIdMalwareStatusMap
+	st.nodeStatus.MalwareScanStatusTime = nodeIdMalwareStatusTimeMap
 	st.nodeStatus.Unlock()
 
 	nodeIdComplianceStatusMap := make(map[string]string)
@@ -385,6 +442,7 @@ func init() {
 		cveScanLogsEsIndex += fmt.Sprintf("-%s", customerUniqueId)
 		complianceLogsEsIndex += fmt.Sprintf("-%s", customerUniqueId)
 		secretScanLogsEsIndex += fmt.Sprintf("-%s", customerUniqueId)
+		malwareScanLogsEsIndex += fmt.Sprintf("-%s", customerUniqueId)
 	}
 
 	if os.Getenv("DF_PROG_NAME") == "topology" {

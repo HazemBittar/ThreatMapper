@@ -1,4 +1,4 @@
-FROM alpine:3.14.2
+FROM alpine:3.17.1
 LABEL maintainer="Deepfence Inc"
 LABEL deepfence.role=system
 
@@ -9,20 +9,21 @@ RUN apk add --no-cache --update bash conntrack-tools iproute2 util-linux curl bi
     && curl -fsSLO https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKERVERSION}.tgz \
     && tar xzvf docker-${DOCKERVERSION}.tgz --strip 1 -C /usr/local/bin docker/docker \
     && rm docker-${DOCKERVERSION}.tgz \
-    && curl -fsSLOk https://github.com/deepfence/vessel/releases/download/v0.8.1/vessel_v0.8.1_linux_amd64.tar.gz \
-    && tar -xzf vessel_v0.8.1_linux_amd64.tar.gz \
+    && curl -fsSLOk https://github.com/deepfence/vessel/releases/download/v0.10.0/vessel_v0.10.0_linux_amd64.tar.gz \
+    && tar -xzf vessel_v0.10.0_linux_amd64.tar.gz \
     && mv vessel /usr/local/bin/ \
-    && rm -rf vessel_v0.8.1_linux_amd64.tar.gz \
-    && curl -fsSLOk https://github.com/containerd/nerdctl/releases/download/v0.18.0/nerdctl-0.18.0-linux-amd64.tar.gz \
-    && tar Cxzvvf /usr/local/bin nerdctl-0.18.0-linux-amd64.tar.gz \
-    && rm nerdctl-0.18.0-linux-amd64.tar.gz \
-    && VERSION="v1.24.1" \
+    && rm -rf vessel_v0.10.0_linux_amd64.tar.gz \
+    && curl -fsSLOk https://github.com/containerd/nerdctl/releases/download/v1.1.0/nerdctl-1.1.0-linux-amd64.tar.gz \
+    && tar Cxzvvf /usr/local/bin nerdctl-1.1.0-linux-amd64.tar.gz \
+    && rm nerdctl-1.1.0-linux-amd64.tar.gz \
+    && VERSION="v1.26.0" \
     && curl -L https://github.com/kubernetes-sigs/cri-tools/releases/download/$VERSION/crictl-${VERSION}-linux-amd64.tar.gz --output crictl-${VERSION}-linux-amd64.tar.gz \
     && tar zxvf crictl-$VERSION-linux-amd64.tar.gz -C /usr/local/bin \
     && rm -f crictl-$VERSION-linux-amd64.tar.gz \
 	&& rm -rf /var/cache/apk/*
 
-COPY ./deepfence_exe /home/deepfence/
+COPY scope/docker/deepfence_exe /home/deepfence/
+COPY deepfence/df-utils/agent_auth/agentAuth /usr/local/bin/agentAuth
 # COPY ./capture_topology_container.sh /home/deepfence/capture_start.sh
 # RUN cp /home/deepfence/capture_start.sh /home/deepfence/capture_stop.sh \
 #     && cp /home/deepfence/capture_start.sh /home/deepfence/capture_status.sh \

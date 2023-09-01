@@ -3,6 +3,7 @@ import classNames from 'classnames';
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { useExpanded, useFlexLayout, usePagination, useResizeColumns, useSortBy, useTable, useRowSelect } from 'react-table';
 import { useDispatch } from 'react-redux';
+import usePrevious from 'react-use/lib/usePrevious';
 import Pagination from './pagination';
 import DFTriggerSelect from '../multi-select/app-trigger';
 import AppLoader from '../../loader';
@@ -268,10 +269,6 @@ const DfTableV2 = forwardRef(({
       totalRows,
       data
     });
-  } else if (showPagination) {
-    additionalTableParams.initialState = {
-      pageSize: defaultPageSize
-    };
   }
 
   const tableInstance = useTable(
@@ -336,18 +333,27 @@ const DfTableV2 = forwardRef(({
   useEffect(() => {
     if (defaultPageSize !== data.length) {
       setPageSize(defaultPageSize);
+    } else if (!manual && data.length) {
+      setPageSize(defaultPageSize);
     }
   }, [defaultPageSize, data]);
 
+  const prevSortBy = usePrevious(sortBy);
   useEffect(() => {
-    if (manual && onSortChange) onSortChange(sortBy);
+    // for some reason sortBy is initially undefined and then it gets
+    // set to empty array causing callback in the parent to be called
+    // twice on initial render
+    if (manual && onSortChange && prevSortBy) onSortChange(sortBy);
   }, [sortBy]);
 
   useImperativeHandle(ref, () => {
     return {
       resetPageIndex: () => {
         gotoPage(0);
-      }
+      },
+      toggleAllRowsExpanded: (value) => {
+        toggleAllRowsExpanded(value);
+      },
     }
   })
 

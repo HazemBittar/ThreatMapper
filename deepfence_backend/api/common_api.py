@@ -18,7 +18,7 @@ from utils.constants import USER_ROLES, TIME_UNIT_MAPPING, CVE_INDEX, ALL_INDICE
     CVE_SCAN_LOGS_INDEX, SCOPE_TOPOLOGY_COUNT, NODE_TYPE_HOST, NODE_TYPE_CONTAINER, NODE_TYPE_POD, ES_MAX_CLAUSE, \
     TOPOLOGY_ID_CONTAINER, TOPOLOGY_ID_CONTAINER_IMAGE, TOPOLOGY_ID_HOST, NODE_TYPE_CONTAINER_IMAGE, \
     TOPOLOGY_ID_KUBE_SERVICE, NODE_TYPE_KUBE_CLUSTER, ES_TERMS_AGGR_SIZE, \
-    REGISTRY_IMAGES_CACHE_KEY_PREFIX, NODE_TYPE_KUBE_NAMESPACE, SECRET_SCAN_LOGS_INDEX, SECRET_SCAN_INDEX, SBOM_INDEX, \
+    REGISTRY_IMAGES_CACHE_KEY_PREFIX, NODE_TYPE_KUBE_NAMESPACE, SECRET_SCAN_LOGS_INDEX, MALWARE_SCAN_LOGS_INDEX, SECRET_SCAN_INDEX, MALWARE_SCAN_INDEX, SBOM_INDEX, \
     SBOM_ARTIFACT_INDEX, CVE_ES_TYPE, CLOUD_COMPLIANCE_LOGS_ES_TYPE, CLOUD_COMPLIANCE_ES_TYPE, CLOUD_COMPLIANCE_INDEX, \
     CLOUD_COMPLIANCE_LOGS_INDEX, COMPLIANCE_INDEX, COMPLIANCE_LOGS_INDEX, COMPLIANCE_ES_TYPE, COMPLIANCE_LOGS_ES_TYPE, \
     CLOUD_TOPOLOGY_COUNT
@@ -44,6 +44,7 @@ from utils.resource import encrypt_cloud_credential
 from resource_models.node import Node
 from utils.common import get_rounding_time_unit
 import time
+import pytz
 
 common_api = Blueprint("common_api", __name__)
 
@@ -682,7 +683,16 @@ def unmask_doc():
         raise InvalidUsage("Missing json value")
     if type(request.json) != dict:
         raise InvalidUsage("Request data invalid")
+
     docs_to_be_unmasked = request.json.get("docs")
+    unmask_across_images = request.json.get("unmask_across_images", False)
+    extra = {"across_images":unmask_across_images, "operation": "unmask"}
+    if docs_to_be_unmasked:
+        for ds in docs_to_be_unmasked:
+            if "cve" in ds.get("_index"):
+                new_doc = ds.copy()
+                new_doc.update(extra)
+                redis.publish("mask-cve", json.dumps(new_doc))
 
     cve_id_list = request.json.get("cve_id_list")
     if cve_id_list:
@@ -808,8 +818,16 @@ def mask_doc():
         raise InvalidUsage("Missing json value")
     if type(request.json) != dict:
         raise InvalidUsage("Request data invalid")
+
     docs_to_be_masked = request.json.get("docs")
     node_type = request.json.get("node_type", "")
+    mask_across_images = request.json.get("mask_across_images", False)
+    extra = {"across_images":mask_across_images, "operation": "mask"}
+    if docs_to_be_masked:
+        for ds in docs_to_be_masked:
+            new_doc = ds.copy()
+            new_doc.update(extra)
+            redis.publish("mask-cve", json.dumps(new_doc))
 
     cve_id_list = request.json.get("cve_id_list")
     if cve_id_list:
@@ -1082,6 +1100,19 @@ def delete_resources():
                 filters["Severity.level"] = severity
             ESConn.bulk_delete(SECRET_SCAN_INDEX, filters, number, TIME_UNIT_MAPPING[time_unit])
             ESConn.bulk_delete(SECRET_SCAN_LOGS_INDEX, filters, number, TIME_UNIT_MAPPING[time_unit])
+
+    elif index_name == MALWARE_SCAN_INDEX:
+        filters = {}
+        if scan_id:
+            filters["scan_id"] = scan_id
+            ESConn.bulk_delete(MALWARE_SCAN_INDEX, filters)
+            ESConn.bulk_delete(MALWARE_SCAN_LOGS_INDEX, filters)
+            message = "Successfully deleted scan id"
+        else:
+            if severity:
+                filters["FileSeverity"] = severity
+            ESConn.bulk_delete(MALWARE_SCAN_INDEX, filters, number, TIME_UNIT_MAPPING[time_unit])
+            ESConn.bulk_delete(MALWARE_SCAN_LOGS_INDEX, filters, number, TIME_UNIT_MAPPING[time_unit])
     # compliance
     elif index_name == COMPLIANCE_INDEX:
         filters = {"type": COMPLIANCE_ES_TYPE}
@@ -1609,12 +1640,28 @@ def user_activity_log():
         if not request.is_json:
             raise InvalidUsage("Missing JSON post data in request")
         post_data = request.json
-        logs = UserActivityLog.query.order_by(UserActivityLog.created_at.desc()).all()
+        
+        from_time = post_data.get("from_time", "")
+        to_time = post_data.get("to_time","")
+        
+        if from_time and to_time:
+            from_time_object = datetime.fromisoformat(from_time).astimezone(pytz.utc)
+            to_time_object = datetime.fromisoformat(to_time).astimezone(pytz.utc)
+            logs = UserActivityLog.query.filter(UserActivityLog.created_at >= from_time_object).filter(UserActivityLog.created_at <= to_time_object).order_by(UserActivityLog.created_at.desc()).all()
+        elif from_time and not to_time:
+            from_time_object = datetime.fromisoformat(from_time).astimezone(pytz.utc)
+            logs = UserActivityLog.query.filter(UserActivityLog.created_at >= from_time_object).order_by(UserActivityLog.created_at.desc()).all()
+        elif not from_time and to_time:
+            to_time_object = datetime.fromisoformat(to_time).astimezone(pytz.utc)
+            logs = UserActivityLog.query.filter(UserActivityLog.created_at <= to_time_object).order_by(UserActivityLog.created_at.desc()).all()
+        else:
+            logs = UserActivityLog.query.order_by(UserActivityLog.created_at.desc()).all()
+            
         total = len(logs)
         if not post_data:
             post_data = {}
         params = get_default_params(post_data)
-        if params.get("size"):
+        if params.get("size")and not from_time and not to_time:
             start_index = int(params.get("start_index"))
             page = params.get("page")
             if not page:
@@ -1703,6 +1750,8 @@ def attack_path():
         if not is_network_attack_vector(cve_doc.get("cve_attack_vector", "")):
             continue
         node = Node.get_node("", scope_id, node_type)
+        if not node:
+            continue
         attack_path = node.get_attack_path_for_node(top_n=1)
         if not attack_path:
             ignore_nodes[node.scope_id] = True

@@ -15,7 +15,7 @@ export const AwsTerraFormScript = withRouter(props => {
   const [collapsedCloudFormation, setCollapsedCloudFormation] = useState(true);
   const [regionValue, setRegionValue] = useState();
   const terraformLink =
-    'https://registry.terraform.io/modules/deepfence/cloud-scanner/aws/latest/examples/single-account-ecs#usage';
+    'https://community.deepfence.io/threatmapper/docs/v1.5/cloudscanner/aws#terraform';
 
   return (
     <div
@@ -99,12 +99,21 @@ export const AwsTerraFormScript = withRouter(props => {
               {regionValue && (
                 <div style={{ marginBottom: '20px' }}>
                   <a
-                    href={`https://${regionValue}.console.aws.amazon.com/cloudformation/home?region=${regionValue}#/stacks/create/review?templateURL=https://deepfence-public.s3.amazonaws.com/cloud-scanner/deepfence-cloud-scanner.template&stackName=Deepfence-Cloud-Scanner`}
+                    href={`https://${regionValue}.console.aws.amazon.com/cloudformation/home?region=${regionValue}#/stacks/create/review?templateURL=https://deepfence-public.s3.amazonaws.com/cloud-scanner/deepfence-cloud-scanner.template&stackName=Deepfence-Cloud-Scanner&param_CloudScannerImage=quay.io/deepfenceio/cloud-scanner:1.5.0`}
                     disabled={regionValue === undefined}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Deploy --&gt;{' '}
+                    Deploy single AWS account--&gt;{' '}
+                  </a>
+                  <br/>
+                  <a
+                    href={`https://${regionValue}.console.aws.amazon.com/cloudformation/home?region=${regionValue}#/stacks/create/review?templateURL=https://deepfence-public.s3.amazonaws.com/cloud-scanner/deepfence-cloud-scanner-org-common.template&stackName=Deepfence-Cloud-Scanner-Org&param_CloudScannerImage=quay.io/deepfenceio/cloud-scanner:1.5.0`}
+                    disabled={regionValue === undefined}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Deploy all AWS organization accounts--&gt;{' '}
                   </a>
                 </div>
               )}
@@ -135,69 +144,12 @@ export const AwsTerraFormScript = withRouter(props => {
               <a target="_blank" rel="noreferrer" href={terraformLink}>
                 {terraformLink}
               </a>
-              <h6 style={{ color: 'white', marginTop: '20px' }}>
-                {' '}
-                Single account{' '}
-              </h6>
-
-              <div style={{ marginTop: '15px' }}>
-                <span style={{ fontSize: '11px' }}>
-                  Copy the code below and paste it into a .tf file on your local
-                  machine.
-                </span>
-                <div
-                  style={{
-                    backgroundColor: 'black',
-                    padding: '10px',
-                    color: 'white',
-                  }}
-                >
-                  <pre style={{ color: 'white' }}>{`provider "aws" {
-region = "<AWS-REGION>; eg. us-east-1"
-}
-
-module "cloud-scanner_example_single-account-ecs" {
-source                        = "deepfence/cloud-scanner/aws//examples/single-account-ecs"
-version                       = "0.1.0"
-mgmt-console-url              = "<Console URL> eg. XXX.XXX.XX.XXX"
-mgmt-console-port             = "443"
-deepfence-key                 = "<Deepfence-key> eg. XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
-}
-`}</pre>
-                </div>
-              </div>
-
-              <div style={{ marginTop: '15px' }}>
-                <span style={{ fontSize: '11px' }}>then run:</span>
-                <div
-                  style={{
-                    backgroundColor: 'black',
-                    color: 'white',
-                  }}
-                >
-                  <pre style={{ color: 'white' }}>
-                    $ terraform init
-                    <br />
-                    $ terraform plan
-                    <br />
-                    $ terraform apply
-                    <br />
-                  </pre>
-                </div>
-              </div>
             </div>
           ) : null}
         </div>
       ) : null}
       <ComplianceStats />
       <ComplianceTable cloudType="aws" />
-      <Route
-        exact
-        path={`${props.match.path}/:id`}
-        render={() => {
-          return <ComplianceSummary />;
-        }}
-      />
     </div>
   );
 });

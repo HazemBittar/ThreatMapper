@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/ugorji/go/codec"
-	"github.com/weaveworks/scope/report"
 	"io"
 	"os"
 	"os/exec"
@@ -13,6 +11,9 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/ugorji/go/codec"
+	"github.com/weaveworks/scope/report"
 
 	"github.com/gomodule/redigo/redis"
 )
@@ -22,6 +23,8 @@ type NodeStatus struct {
 	VulnerabilityScanStatusTime map[string]string
 	SecretScanStatus            map[string]string
 	SecretScanStatusTime        map[string]string
+	MalwareScanStatus           map[string]string
+	MalwareScanStatusTime       map[string]string
 	sync.RWMutex
 }
 
@@ -78,11 +81,12 @@ const (
 )
 
 var (
-	TopologyIdNodeTypeMap map[string]string
-	AllNodeTypes          []string
-	statusMap             map[string]string
-	cveScanLogsEsIndex    = "cve-scan"
-	secretScanLogsEsIndex = "secret-scan-logs"
+	TopologyIdNodeTypeMap  map[string]string
+	AllNodeTypes           []string
+	statusMap              map[string]string
+	cveScanLogsEsIndex     = "cve-scan"
+	secretScanLogsEsIndex  = "secret-scan-logs"
+	malwareScanLogsEsIndex = "malware-scan-logs"
 )
 
 func init() {
@@ -109,6 +113,7 @@ func init() {
 	if customerUniqueId != "" {
 		cveScanLogsEsIndex += fmt.Sprintf("-%s", customerUniqueId)
 		secretScanLogsEsIndex += fmt.Sprintf("-%s", customerUniqueId)
+		malwareScanLogsEsIndex += fmt.Sprintf("-%s", customerUniqueId)
 	}
 }
 
@@ -436,6 +441,8 @@ type DeepfenceTopology struct {
 	VulnerabilityScanStatusTime  string              `json:"vulnerability_scan_status_time,omitempty"`
 	SecretScanStatus             string              `json:"secret_scan_status,omitempty"`
 	SecretScanStatusTime         string              `json:"secret_scan_status_time,omitempty"`
+	MalwareScanStatus            string              `json:"malware_scan_status,omitempty"`
+	MalwareScanStatusTime        string              `json:"malware_scan_status_time,omitempty"`
 }
 
 type TopologyFilterNumberOption struct {
@@ -475,14 +482,19 @@ func NewRedisPool() (*redis.Pool, int) {
 	}
 	redisAddr := fmt.Sprintf("%s:%s", redisHost, redisPort)
 	return &redis.Pool{
-		MaxIdle:   5,
-		MaxActive: 10, // max number of connections
+		MaxIdle:   50,
+		MaxActive: 500, // max number of connections
 		Dial: func() (redis.Conn, error) {
 			c, err := redis.Dial("tcp", redisAddr, redis.DialDatabase(dbNumInt))
 			if err != nil {
 				return nil, err
 			}
 			return c, err
+		},
+		IdleTimeout: 240 * time.Second,
+		TestOnBorrow: func(c redis.Conn, t time.Time) error {
+			_, err := c.Do("PING")
+			return err
 		},
 	}, dbNumInt
 }

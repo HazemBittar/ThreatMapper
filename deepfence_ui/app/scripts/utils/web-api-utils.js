@@ -1054,7 +1054,7 @@ export function notifyAlerts(dispatch, params) {
 /* START :: CVE VULNERABILITY */
 export function getCveSeverityChartData(dispatch, params) {
   let url = `${backendElasticApiEndPoint()}/vulnerabilities/cve_severity_chart?number=${params.number
-    }&time_unit=${params.time_unit}`;
+    }&time_unit=${params.time_unit}&hideMasked=${params.hideMasked}`;
   if (params.lucene_query.length !== 0) {
     const luceneQuery = getLuceneQuery(params.lucene_query);
     url = `${url}&lucene_query=${encodeURIComponent(luceneQuery)}`;
@@ -1321,10 +1321,11 @@ export function getCVEImageReport(params = {}) {
     node_filters,
     start_index,
     size,
+    hideMasked
   } = params;
   let url = `${backendElasticApiEndPoint()}/vulnerabilities/image_report?lucene_query=${getLuceneQuery(
     lucene_query
-  )}`;
+  )}&hideMasked=${hideMasked}`;
   if (params.number && params.time_unit) {
     url = `${url}&number=${params.number}&time_unit=${params.time_unit}`;
   }
@@ -1709,8 +1710,8 @@ export function getRunningNotification() {
 }
 
 export function startCVEScan(params = {}) {
-  const { nodeId, nodeType, taglist, scanType, scanThisCluster, scanThisNamespace, priority = '' } = params;
-  const url = `${backendElasticApiEndPoint()}/node/0/cve_scan_start?scope_id=${nodeId}&node_type=${nodeType}&priority=${priority}`;
+  const { nodeId, imageId, nodeType, taglist, scanType, scanThisCluster, scanThisNamespace, priority = '' } = params;
+  const url = `${backendElasticApiEndPoint()}/node/0/cve_scan_start?scope_id=${nodeId}&image_id=${imageId}&node_type=${nodeType}&priority=${priority}`;
   const data = {
     user_defined_tags: taglist,
     scanType,
@@ -1730,8 +1731,8 @@ export function startCVEScan(params = {}) {
 }
 
 export function stopCVEScan(params = {}) {
-  const { nodeId, nodeType } = params;
-  const url = `${backendElasticApiEndPoint()}/node/0/cve_scan_stop?scope_id=${nodeId}&node_type=${nodeType}`;
+  const { nodeId, imageId, nodeType } = params;
+  const url = `${backendElasticApiEndPoint()}/node/0/cve_scan_stop?scope_id=${nodeId}&image_id=${imageId}&node_type=${nodeType}`;
   return fetch(url, {
     credentials: 'same-origin',
     method: 'POST',
@@ -1754,6 +1755,32 @@ export function startSecretScan(params = {}) {
     },
   }).then(errorHandler);
 }
+
+// export function stopSecretScan(params = {}) {
+//   const { nodeId, nodeType } = params;
+//   const url = `${backendElasticApiEndPoint()}/node/0/secret_scan_stop?scope_id=${nodeId}&node_type=${nodeType}`;
+//   return fetch(url, {
+//     credentials: 'same-origin',
+//     method: 'POST',
+//     headers: {
+//       'Content-Type': 'application/json',
+//       Authorization: getAuthHeader(),
+//     },
+//   }).then(errorHandler);
+// }
+//
+// export function stopMalwareScan(params = {}) {
+//   const { nodeId, nodeType } = params;
+//   const url = `${backendElasticApiEndPoint()}/node/0/malware_scan_stop?scope_id=${nodeId}&node_type=${nodeType}`;
+//   return fetch(url, {
+//     credentials: 'same-origin',
+//     method: 'POST',
+//     headers: {
+//       'Content-Type': 'application/json',
+//       Authorization: getAuthHeader(),
+//     },
+//   }).then(errorHandler);
+// }
 
 export function getTopAttackPathsForNode(params = {}) {
   const { hostName, nodeType, scopeId, containerImage } = params;
@@ -1857,7 +1884,6 @@ export function secretsScanRegistryImages(params = {}) {
     },
   }).then(errorHandler);
 }
-
 
 export function saveRegistryCredentials(params = {}) {
   const url = `${backendElasticApiEndPoint()}/vulnerability/container_image_registry`;
@@ -2020,6 +2046,59 @@ export function reportDownloadStatus(params = {}) {
       Authorization: getAuthHeader(),
     },
   }).then(errorHandler);
+}
+export function downloadMostExploitableReport() {
+  const url = `${backendElasticApiEndPoint()}/vulnerability/top_exploits_download`;
+  return fetch(url, {
+    credentials: 'same-origin',
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+    },
+  })
+  .then(response => {
+    return new Promise((resolve, reject) => {
+      if (response.ok) {
+        resolve(response.blob());
+      } else {
+        // eslint-disable-next-line
+        if (response.status === 400) {
+          response.json().then(
+            jObj => {
+              // eslint-disable-next-line
+              reject({
+                ...jObj.error,
+              });
+            },
+            // eslint-disable-next-line
+            error => {
+              // eslint-disable-next-line
+              reject({
+                message: 'Failed to decode',
+              });
+            }
+          );
+        } else {
+          // eslint-disable-next-line
+          reject({
+            message: 'Failed to fetch file',
+          });
+        }
+      }
+    });
+  })
+  .then(blob => {
+    const fileURL = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = fileURL;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  })
+  .catch(e => {
+    alert(e.message)
+  });
 }
 
 export function downloadReport(params = {}) {
@@ -2313,11 +2392,12 @@ export function getSecretScanData(params = {}) {
     filters,
     start_index,
     size,
-    lucene_query: luceneQuery = []
+    lucene_query: luceneQuery = [],
+    hideMasked,
   } = params;
   const luceneQueryEscaped = encodeURIComponent(getLuceneQuery(luceneQuery));
 
-  let url = `${backendElasticApiEndPoint()}/secret/node_report?lucene_query=${luceneQueryEscaped}`;
+  let url = `${backendElasticApiEndPoint()}/secret/node_report?lucene_query=${luceneQueryEscaped}&hideMasked=${hideMasked}`;
   const body = {
     filters,
     start_index,
@@ -2416,8 +2496,9 @@ export function getSecretScanReportChart(params) {
 }
 
 export function getSecretScanChartData(params, dispatch) {
+  const { hideMasked } = params;
   let url = `${backendElasticApiEndPoint()}/secret/secret_severity_chart?number=${params.number
-    }&time_unit=${params.time_unit}`;
+    }&time_unit=${params.time_unit}&hideMasked=${hideMasked}`;
   if (params.lucene_query.length !== 0) {
     const luceneQuery = getLuceneQuery(params.lucene_query);
     url = `${url}&lucene_query=${encodeURIComponent(luceneQuery)}`;
@@ -2500,7 +2581,6 @@ export function secretScanUnmaskDocs(dispatch, params) {
     },
   });
 };
-
 
 export function startComplianceScan(params ={}) {
   const { nodeId, checkTypes, cloudType} = params;
@@ -2641,7 +2721,7 @@ export function getComplianceChartData(params = {}) {
 }
 
 export function getComplianceBarChart(params = {}) {
-  const { lucene_query: luceneQuery = [], checkType, resource, nodeId, scanId, cloudType, number, time_unit} = params;
+  const { lucene_query: luceneQuery = [], checkType, resource, nodeId, scanId, cloudType, number, time_unit, hideMasked} = params;
   const requestBody = {
     scan_id: scanId,
   };
@@ -2649,7 +2729,7 @@ export function getComplianceBarChart(params = {}) {
     requestBody.filters = { resource };
   }
   const luceneQueryEscaped = encodeURIComponent(getLuceneQuery(luceneQuery));
-  const url = `${backendElasticApiEndPoint()}/compliance/${checkType}/test_category_report?&lucene_query=${luceneQueryEscaped}&number=${number}&time_unit=${time_unit}&node_type=${cloudType}`;
+  const url = `${backendElasticApiEndPoint()}/compliance/${checkType}/test_category_report?&lucene_query=${luceneQueryEscaped}&number=${number}&time_unit=${time_unit}&node_type=${cloudType}&hideMasked=${hideMasked}`;
   return fetch(url, {
     credentials: 'same-origin',
     method: 'POST',
@@ -2664,7 +2744,7 @@ export function getComplianceBarChart(params = {}) {
 
 // Donut chart Scan Results
 export function getResultDonutData(params = {}) {
-  const { lucene_query: luceneQuery = [], checkType, resource, nodeId, scanId, cloudType, number, time_unit} = params;
+  const { lucene_query: luceneQuery = [], checkType, resource, nodeId, scanId, cloudType, number, time_unit, hideMasked} = params;
   const filters = {};
   if (resource) {
     filters.resource = resource;
@@ -2674,7 +2754,7 @@ export function getResultDonutData(params = {}) {
     filters
   };
   const luceneQueryEscaped = encodeURIComponent(getLuceneQuery(luceneQuery));
-  const url = `${backendElasticApiEndPoint()}/compliance/${checkType}/test_status_report?&lucene_query=${luceneQueryEscaped}&number=${number}&time_unit=${time_unit}&node_type=${cloudType}`;
+  const url = `${backendElasticApiEndPoint()}/compliance/${checkType}/test_status_report?&lucene_query=${luceneQueryEscaped}&number=${number}&time_unit=${time_unit}&node_type=${cloudType}&hideMasked=${hideMasked}`;
   return fetch(url, {
     credentials: 'same-origin',
     method: 'POST',
@@ -2848,3 +2928,293 @@ export function getAttackGraphNodeInfo(params = {}) {
     },
   }).then(errorHandler);
 }
+
+export function startMalwareScan(params = {}) {
+  const { nodeId, nodeType } = params;
+  const url = `${backendElasticApiEndPoint()}/node/0/malware_scan_start?scope_id=${nodeId}&node_type=${nodeType}`;
+  return fetch(url, {
+    credentials: 'same-origin',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+    },
+  }).then(errorHandler);
+}
+
+export function getMalwareScanStatus(params = {}) {
+  const { imageId } = params;
+  const imageIdEscaped = encodeURIComponent(imageId);
+  const url = `${backendElasticApiEndPoint()}/malware-scan/${imageIdEscaped}`;
+  return fetch(url, {
+    credentials: 'same-origin',
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+    },
+  }).then(errorHandler);
+}
+
+export function malwareScanRegistryImages(params = {}) {
+  const url = `${backendElasticApiEndPoint()}/malware/scan_registry`;
+  return fetch(url, {
+    credentials: 'same-origin',
+    method: 'POST',
+    body: JSON.stringify(params),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+    },
+  }).then(errorHandler);
+}
+
+export function getMalwareScanData(params = {}) {
+  const {
+    dispatch,
+    filters,
+    start_index,
+    size,
+    lucene_query: luceneQuery = [],
+    hideMasked = true,
+  } = params;
+  const luceneQueryEscaped = encodeURIComponent(getLuceneQuery(luceneQuery));
+
+  let url = `${backendElasticApiEndPoint()}/malware/node_report?lucene_query=${luceneQueryEscaped}&hideMasked=${hideMasked}`;
+  const body = {
+    filters,
+    start_index,
+    size,
+  };
+  return doRequest({
+    url,
+    method: 'POST',
+    data: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+      'cache-control': 'no-cache',
+    },
+    error: error => {
+      if (error.status === 401 || error.statusText === 'UNAUTHORIZED') {
+        // dispatch(receiveLogoutResponse());
+        refreshAuthToken();
+      } else if (error.status === 403) {
+        dispatch(receiveClearDashBoardResponse());
+      } else {
+        log(`Error in api modal details request: ${error}`);
+      }
+    },
+  });
+}
+
+export function getMalwareScanResults(params = {}) {
+  const {
+    dispatch,
+    filters,
+    start_index,
+    size,
+    lucene_query: luceneQuery = [],
+  } = params;
+  const luceneQueryEscaped = encodeURIComponent(getLuceneQuery(luceneQuery));
+  let url = `${backendElasticApiEndPoint()}/malware/scan_results?lucene_query=${luceneQueryEscaped}`;
+  const body = {
+    filters,
+    start_index,
+    size,
+  };
+  return doRequest({
+    url,
+    method: 'POST',
+    data: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+      'cache-control': 'no-cache',
+    },
+    error: error => {
+      if (error.status === 401 || error.statusText === 'UNAUTHORIZED') {
+        // dispatch(receiveLogoutResponse());
+        refreshAuthToken();
+      } else if (error.status === 403) {
+        dispatch(receiveClearDashBoardResponse());
+      } else {
+        log(`Error in api modal details request: ${error}`);
+      }
+    },
+  });
+}
+
+export function getTopMalwareScanContainerAndHosts(params) {
+
+  const { luceneQuery = [] } = params;
+
+  const luceneQueryEscaped = encodeURIComponent(getLuceneQuery(luceneQuery));
+
+  const url = `${backendElasticApiEndPoint()}/malware/top_exposing_nodes?lucene_query=${luceneQueryEscaped}`;
+  return fetch(url, {
+    credentials: 'same-origin',
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+    },
+  }).then(errorHandler);
+}
+
+export function getMalwareScanReportChart(params) {
+  const { globalSearchQuery = [] } = params;
+
+  const luceneQueryEscaped = encodeURIComponent(getLuceneQuery(globalSearchQuery));
+
+  const url = `${backendElasticApiEndPoint()}/malware/report?lucene_query=${luceneQueryEscaped}`;
+  return fetch(url, {
+    credentials: 'same-origin',
+    method: 'GET',
+    headers: {
+      // 'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+    },
+  }).then(errorHandler);
+}
+
+
+export function getMalwareClassesChartReport(params) {
+  const { globalSearchQuery = [] } = params;
+
+  const luceneQueryEscaped = encodeURIComponent(getLuceneQuery(globalSearchQuery));
+
+  const url = `${backendElasticApiEndPoint()}/malware/class/report?lucene_query=${luceneQueryEscaped}`;
+  return fetch(url, {
+    credentials: 'same-origin',
+    method: 'GET',
+    headers: {
+      // 'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+    },
+  }).then(errorHandler);
+}
+
+export function getMalwareScanChartData(params, dispatch) {
+  const { hideMasked = true } = params;
+  let url = `${backendElasticApiEndPoint()}/malware/malware_severity_chart?number=${params.number
+    }&time_unit=${params.time_unit}&hideMasked=${hideMasked}`;
+  if (params.lucene_query.length !== 0) {
+    const luceneQuery = getLuceneQuery(params.lucene_query);
+    url = `${url}&lucene_query=${encodeURIComponent(luceneQuery)}`;
+  }
+  let body = {};
+  const { scan_id } = params;
+  body = {
+    filters: {
+      scan_id,
+    },
+  };
+  return doRequest({
+    url,
+    method: 'POST',
+    data: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+      'cache-control': 'no-cache',
+    },
+    error: error => {
+      if (error.status === 401 || error.statusText === 'UNAUTHORIZED') {
+        // dispatch(receiveLogoutResponse());
+        refreshAuthToken();
+      } else if (error.status === 403) {
+        dispatch(receiveClearDashBoardResponse());
+      } else {
+        log(`Error in api modal details request: ${error}`);
+      }
+    },
+  });
+}
+
+export function getMalwareClassesChartData(params, dispatch) {
+  let url = `${backendElasticApiEndPoint()}/malware/class/malware_severity_chart?number=${params.number
+  }&time_unit=${params.time_unit}`;
+  if (params.lucene_query.length !== 0) {
+    const luceneQuery = getLuceneQuery(params.lucene_query);
+    url = `${url}&lucene_query=${encodeURIComponent(luceneQuery)}`;
+  }
+  let body = {};
+  const { scan_id } = params;
+  body = {
+    filters: {
+      scan_id,
+    },
+  };
+  return doRequest({
+    url,
+    method: 'POST',
+    data: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+      'cache-control': 'no-cache',
+    },
+    error: error => {
+      if (error.status === 401 || error.statusText === 'UNAUTHORIZED') {
+        // dispatch(receiveLogoutResponse());
+        refreshAuthToken();
+      } else if (error.status === 403) {
+        dispatch(receiveClearDashBoardResponse());
+      } else {
+        log(`Error in api modal details request: ${error}`);
+      }
+    },
+  });
+}
+
+
+export function malwareScanMaskDocs(dispatch, params) {
+  let url = `${backendElasticApiEndPoint()}/malware/mask-doc`;
+  return doRequest({
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+    },
+    data: JSON.stringify(params),
+    url,
+    success: response => {
+      if (response.status === 204) {
+        getCloudCredentials(dispatch);
+      }
+    },
+    error: error => {
+      if (error.status === 401 || error.statusText === 'UNAUTHORIZED') {
+        refreshAuthToken();
+      } else {
+        log(`Error in api login ${error}`);
+      }
+    },
+  });
+};
+
+export function malwareScanUnmaskDocs(dispatch, params) {
+  let url = `${backendElasticApiEndPoint()}/malware/unmask-doc`;
+  return doRequest({
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: getAuthHeader(),
+    },
+    data: JSON.stringify(params),
+    url,
+    success: response => {
+      if (response.status === 204) {
+        getCloudCredentials(dispatch);
+      }
+    },
+    error: error => {
+      if (error.status === 401 || error.statusText === 'UNAUTHORIZED') {
+        refreshAuthToken();
+      } else {
+        log(`Error in api login ${error}`);
+      }
+    },
+  });
+};

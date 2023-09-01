@@ -82,7 +82,7 @@ launch_deepfenced() {
     if [ "$FEATURE" == "appsec" ]; then
         # In k8s, if agent pod restarts these files are not cleared
         rm -rf /var/log/fenced/* 2>/dev/null
-        mkdir -p /var/log/fenced/compliance /var/log/fenced/compliance-scan-logs 2>/dev/null
+        mkdir -p /var/log/fenced/secret-scan-log /var/log/fenced/secret-scan /var/log/fenced/malware-scan /var/log/fenced/malware-scan-log /var/log/fenced/compliance /var/log/fenced/compliance-scan-logs 2>/dev/null
         launch_system_services
         if [[ -z "${SCOPE_HOSTNAME}" ]]; then
             SCOPE_HOSTNAME="$(hostname)"
@@ -97,6 +97,8 @@ launch_deepfenced() {
             # echo "App security : Active Mode, Listening on port $DF_LISTEN_PORT "
             DOCKER_API_VERSION=$DOCKER_API_VERSION run_dind.sh -a $MGMT_CONSOLE_PORT -s 0
         fi
+        envsubst '${DEEPFENCE_KEY}:${MGMT_CONSOLE_URL}:${MGMT_CONSOLE_PORT}:${SCOPE_HOSTNAME}' </etc/td-agent-bit/td-agent-bit.conf >/etc/td-agent-bit/td-agent-bit-new.conf
+        mv /etc/td-agent-bit/td-agent-bit-new.conf /etc/td-agent-bit/td-agent-bit.conf && chmod 600 /etc/td-agent-bit/*
         envsubst '${SCOPE_HOSTNAME}:${MGMT_CONSOLE_URL}:${MGMT_CONSOLE_PORT}' </home/deepfence/supervisord-temp.conf >/home/deepfence/supervisord.conf
         unlink /var/run/supervisor.sock 2>/dev/null
         /usr/bin/supervisord -c /home/deepfence/supervisord.conf
@@ -120,11 +122,5 @@ if [ -n "$pidVal" ]; then
     echo "Agent already running. Not going to start"
     exit 0
 fi
-sysctl -w fs.file-max=1048576
-sysctl -w fs.nr_open=1048576
-sysctl -w net.core.somaxconn=10240
-sysctl -w net.ipv4.tcp_mem="1048576 1048576 1048576"
-sysctl -w net.ipv4.tcp_max_syn_backlog=1024
-sysctl -w net.ipv4.ip_local_port_range="1024 65534"
 create_cgroups
 main "$@"

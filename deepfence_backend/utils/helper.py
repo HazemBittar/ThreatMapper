@@ -5,7 +5,7 @@ from utils.constants import NODE_TYPE_CONTAINER, NODE_TYPE_PROCESS_BY_NAME, NODE
     DEEPFENCE_CONTAINER_STATE_URL, TOPOLOGY_ID_NODE_TYPE_MAP_REVERSE, NODE_TYPE_SWARM_SERVICE, \
     DEEPFENCE_CONSOLE_CPU_MEMORY_STATE_URL, REDIS_KEY_PREFIX_CLUSTER_AGENT_PROBE_ID, EMPTY_POD_SCOPE_ID, \
     ES_TERMS_AGGR_SIZE, SENSITIVE_KEYS, REDACT_STRING, VULNERABILITY_LOG_PATH, TIME_UNIT_MAPPING, CVE_SCAN_LOGS_INDEX, \
-    CVE_INDEX, SECRET_SCAN_LOGS_INDEX, CUSTOMER_UNIQUE_ID, COMPLIANCE_INDEX, CLOUD_COMPLIANCE_LOGS_INDEX, \
+    CVE_INDEX, SECRET_SCAN_LOGS_INDEX, MALWARE_SCAN_LOGS_INDEX, CUSTOMER_UNIQUE_ID, COMPLIANCE_INDEX, CLOUD_COMPLIANCE_LOGS_INDEX, \
     COMPLIANCE_LOGS_INDEX, ES_MAX_CLAUSE
 import hashlib
 import requests
@@ -89,7 +89,7 @@ def validate_port(port):
 def validate_domain(domain):
     if not domain:
         return False
-    regex = "^((?!-)[A-Za-z0-9-]{1,63}(?<!-)\\.)+[A-Za-z]{2,6}$"
+    regex = "^((?!-)[A-Za-z0-9-]{1,63}(?<!-)\\.)+[A-Za-z]{2,18}$"
     if ":" in domain:
         domain_split = str(domain).split(":")
         domain = domain_split[0]
@@ -125,6 +125,8 @@ def get_recent_scan_ids(index_name, number, time_unit, lucene_query_string, filt
         elif index_name in [COMPLIANCE_LOGS_INDEX, CLOUD_COMPLIANCE_LOGS_INDEX]:
             filters = {"scan_status": "COMPLETED"}
         elif index_name == SECRET_SCAN_LOGS_INDEX:
+            filters = {"scan_status": "COMPLETE"}
+        elif index_name == MALWARE_SCAN_LOGS_INDEX:
             filters = {"scan_status": "COMPLETE"}
         else:
             filters = {}
@@ -515,10 +517,9 @@ def validateJiraCredentials(siteurl, username, password, api_token, projectkey, 
             if not api_token:
                 body = {'username': username, 'password': password}
                 apiurl = '{0}/rest/auth/1/session'.format(siteurl.strip('/'))
-                response = requests.post(apiurl, json=body)
+                response = requests.post(apiurl, json=body, verify=False)
             else:
-                response = requests.post(siteurl.strip(
-                    '/'), auth=(username, api_token))
+                response = requests.post(siteurl.strip('/'), auth=(username, api_token), verify=False)
         except requests.exceptions.ConnectionError as e:
             raise JIRAError(text='Invalid Site URL')
 
@@ -536,10 +537,9 @@ def validateJiraCredentials(siteurl, username, password, api_token, projectkey, 
                 raise JIRAError(text="Invalid Credentials")
 
         if not api_token:
-            jclient = JIRA(siteurl, auth=(username, password,), max_retries=0)
+            jclient = JIRA(siteurl, auth=(username, password,), max_retries=0, options={"verify": False})
         else:
-            jclient = JIRA(siteurl, basic_auth=(
-                username, api_token), max_retries=0)
+            jclient = JIRA(siteurl, basic_auth=(username, api_token), max_retries=0, options={"verify": False})
 
         # validating project key
         jclient.project(projectkey)
@@ -768,6 +768,43 @@ def get_image_secret_status(required_fields=None):
         pass
     return image_index
 
+def get_image_malware_status(required_fields=None):
+    if not required_fields:
+        required_fields = ["@timestamp", "scan_status"]
+    aggs = {
+        "node_id": {
+            "terms": {"field": "node_id.keyword", "size": ES_TERMS_AGGR_SIZE},
+            "aggs": {"recent_status": {
+                "top_hits": {
+                    "sort": [{"@timestamp": {"order": "desc"}}],
+                    "_source": {"includes": required_fields}, "size": 1
+                }
+            }}
+        }
+    }
+    image_index = {}
+    from utils.esconn import ESConn
+    try:
+        aggs_response = ESConn.aggregation_helper(
+            MALWARE_SCAN_LOGS_INDEX, {"node_type": NODE_TYPE_CONTAINER_IMAGE}, aggs, None, None, None,
+            add_masked_filter=False)
+        node_buckets = aggs_response.get("aggregations", {}).get(
+            "node_id", {}).get('buckets', [])
+
+        # create an index for mapping image name and cve status details
+
+        def image_index_handler(acc, node):
+            hits = node.get("recent_status", {}).get(
+                'hits', {}).get('hits', {})
+            if len(hits) > 0:
+                acc[node.get('key')] = {k: v for k, v in hits[0].get(
+                    "_source", {}).items() if k in required_fields}
+            return acc
+
+        image_index = reduce(image_index_handler, node_buckets, {})
+    except:
+        pass
+    return image_index
 
 # redact_sensitivie_info removes the SENSITIVE_KEYS and
 # replaces it with REDACT_STRING
@@ -886,6 +923,37 @@ def get_all_secret_scanned_images(days) -> list:
             image_names.append(datum.get('key').split(";")[0])
     return set(image_names)
 
+def get_all_malware_scanned_images(days) -> list:
+    from utils.esconn import ESConn
+    query_agg = {
+        "query": {
+            "bool": {
+                "must": [{
+                    "term": {"node_type": "container_image" }
+                },
+                    {
+                    "range": {
+                        "@timestamp": {"gte": "now-{0}d/d".format(days)}
+                    }
+                }]
+            }
+        },
+        "aggs": {
+            "images": {
+                "terms": {
+                    "field": "node_id.keyword",
+                    "size": ES_TERMS_AGGR_SIZE
+                }
+            }
+        }
+    }
+    scanned_images = ESConn.search(MALWARE_SCAN_LOGS_INDEX, query_agg, 0, 0)
+
+    image_names = []
+    for datum in scanned_images['aggregations']['images']['buckets']:
+        if datum.get('key'):
+            image_names.append(datum.get('key').split(";")[0])
+    return set(image_names)
 
 def set_vulnerability_status_for_packages(open_files_list, number, time_unit, lucene_query_string,open_files_map,open_files_list_final):
     from utils.esconn import ESConn
@@ -1120,6 +1188,7 @@ def get_top_exploitable_vulnerabilities(number, time_unit, lucene_query_string, 
     for vulnerability in top_vulnerabilities:
         cve_doc = vulnerability.get("_source", {})
         cve_id = cve_doc.get("cve_id")
+        is_cve_fixed = 1 if cve_doc.get("cve_fixed_in", "") else 0
         node_name = cve_doc.get('cve_container_image', '')
         network_attack_vector = is_network_attack_vector(cve_doc.get("cve_attack_vector", ""))
         if not network_attack_vector and cve_doc.get('cve_severity') != "critical":
@@ -1153,12 +1222,18 @@ def get_top_exploitable_vulnerabilities(number, time_unit, lucene_query_string, 
                 exploit_present,
                 1 if prev_exploit_poc else 0
             )
+            prev_cve_fixed_in = prev_vulnerability['_source'].get("cve_fixed_in", "")
+            vulnerability['_source']['is_cve_fixed'] = max(
+                is_cve_fixed,
+                1 if prev_cve_fixed_in else 0
+            )
         else:
             vulnerability['_source']['vulnerable_images'] = [node_name]
             vulnerability['_source']['exploitability_score'] = exploitability_score
             vulnerability['_source']['attack_vector'] = attack_vector_map[exploitability_score][0]
             vulnerability['_source']['live_connection'] = attack_vector_map[exploitability_score][1]
             vulnerability['_source']['exploit_present'] = exploit_present
+            vulnerability['_source']['is_cve_fixed'] = is_cve_fixed
         vulnerability['_source']['uscore'] = ((1 + (
                 min(max_uptime, active_nodes.get(cve_doc.get("cve_container_image"), 0)) /
                 (float)(max_uptime))) * cve_doc.get("cve_cvss_score"))
@@ -1175,6 +1250,7 @@ def get_top_exploitable_vulnerabilities(number, time_unit, lucene_query_string, 
             x.get('_source', {}).get('exploitability_score'),
             cve_severity_map[x.get('_source', {}).get('cve_severity', '')],
             x.get('_source', {}).get('exploit_present'),
+            x.get('_source', {}).get('is_cve_fixed'),
             x.get('_source', {}).get('cve_cvss_score', 0),
         ),
         reverse=True
@@ -1188,3 +1264,21 @@ def get_top_exploitable_vulnerabilities(number, time_unit, lucene_query_string, 
         else:
             vulnerability['_source']['rank'] = rank
     return uniq_top_vulnerabilities[:size]
+
+
+
+def get_node_names():
+    topology_data = redis.mget([
+        websocketio_channel_name_format(NODE_TYPE_HOST + "?format=deepfence")[1],
+        websocketio_channel_name_format(NODE_TYPE_CONTAINER_IMAGE + "?format=deepfence")[1],
+        websocketio_channel_name_format(NODE_TYPE_CONTAINER + "?format=deepfence")[1]
+    ])
+    topology_data = [
+        json.loads(topology_data[0]) if topology_data[0] else {},
+        json.loads(topology_data[1]) if topology_data[1] else {},
+        json.loads(topology_data[2]) if topology_data[2] else {}
+    ]
+    
+    return topology_data
+    
+    

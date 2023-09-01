@@ -4,6 +4,7 @@
 import React from 'react';
 import { connect } from 'react-redux';
 // Custom component imports
+import { differenceWith } from 'lodash';
 import SeverityDropdownView from '../components/common/severity-radio-button-collection/severity-radio-button-collection';
 import DFSelect from '../components/common/multi-select/app';
 import {
@@ -24,7 +25,7 @@ import AdvanceFilterOption, {
 
 const allNodeType = 'host,container_image,pod,aws';
 
-const withIntegrationForm = WrappedComponent => {
+const withIntegrationForm = (WrappedComponent, ingoreResources) => {
   class HOC extends React.PureComponent {
     constructor(props) {
       super(props);
@@ -62,7 +63,7 @@ const withIntegrationForm = WrappedComponent => {
       const params = {
         node_type: allNodeType,
         filters:
-          'host_name,container_name,image_name_with_tag,user_defined_tags,kubernetes_namespace,kubernetes_cluster_name,cloudtrail_trail',
+          'host_name,container_name,image_name_with_tag,user_defined_tags,kubernetes_namespace,kubernetes_cluster_name,cloudtrail_trail,severity',
       };
       return dispatch(enumerateFiltersAction(params));
     }
@@ -154,15 +155,16 @@ const withIntegrationForm = WrappedComponent => {
       // for intergration_type: jira
       // with password state has 2 extra variables empty/false(isAuthToken and authToken)
       // with auth-token state has 1 extra variable empty/false(password)
+      // there is one optional field(assignee)
       if (childPayload.integration_type === 'jira') {
         if (childPayload.isAuthToken) {
           childFormComplete =
             childValues.length !== 0 &&
-            childValues.length - 1 === filledValues.length;
+            [childValues.length - 1, childValues.length - 2].includes(filledValues.length);
         } else {
           childFormComplete =
             childValues.length !== 0 &&
-            childValues.length - 2 === filledValues.length;
+            [childValues.length - 3, childValues.length - 2].includes(filledValues.length);
         }
       }
       if (
@@ -303,6 +305,13 @@ const withIntegrationForm = WrappedComponent => {
         notificationOptionsCheck = NOTIFICATION_RESOURCE_OPTIONS;
       } else {
         notificationOptionsCheck = NOTIFICATION_RESOURCE_OPTIONS_CLOUDTRAIL;
+        if (ingoreResources && ingoreResources.length) {
+          notificationOptionsCheck = differenceWith(
+            NOTIFICATION_RESOURCE_OPTIONS_CLOUDTRAIL, 
+            ingoreResources, 
+            ({ value }, id) => id === value
+          );
+        }
       }
 
       const cloudTrailOptions =

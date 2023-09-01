@@ -19,6 +19,7 @@ const SecretScanImageReport = props => {
     registerPolling,
     updatePollParams,
     filterValues = {},
+    hideMasked
   } = props;
   const dispatch = useDispatch();
   const [redirect, setRedirect] = useState(false);
@@ -31,8 +32,7 @@ const SecretScanImageReport = props => {
       Header: 'Node Type',
       accessor: 'node_type',
       Cell: row => {
-        let displayValue = row.value || 'container image';
-        displayValue = displayValue.replace('_', ' ');
+        const displayValue = (row.value === 'container_image' ? 'image' : row.value) || 'image';
         return displayValue;
       },
       width: 30,
@@ -75,7 +75,7 @@ const SecretScanImageReport = props => {
     });
     setPage(0)
     dispatch(saveImageReportTableStateAction({ pageNumber: 0 }));
-  }, [globals]);
+  }, [globals, filterValues]);
 
   useEffect(() => {
     // pollable: register the function which needs to be polled
@@ -133,6 +133,7 @@ const SecretScanImageReport = props => {
       filters: nonEmptyFilters,
       start_index: page ? page * pageSize : page,
       size: pageSize,
+      hideMasked: props.hideMasked,
     };
     return dispatch(getSecretScanDataAction(params));
   };
@@ -151,8 +152,8 @@ const SecretScanImageReport = props => {
   };
 
   useUpdateEffect(() => {
-    updatePollParams({ pageSize: rowCountValue });
-  }, [rowCountValue]);
+    updatePollParams({ pageSize: rowCountValue, hideMasked });
+  }, [rowCountValue, hideMasked]);
 
   const renderSubComponent = ({ row }) => (
     <SecretScanImageReportDetails
